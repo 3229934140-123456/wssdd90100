@@ -1,4 +1,4 @@
-export type Category = 'abuse' | 'boycott' | 'quality' | 'fake_ad' | 'price'
+export type Category = 'abuse' | 'boycott' | 'quality' | 'fake_ad' | 'price' | 'other'
 export type Channel = 'weibo' | 'douyin' | 'xiaohongshu' | 'wechat' | 'other'
 export type NoteType = 'official_response' | 'media_report' | 'influencer_repost' | 'other'
 export type EventType = 'spike' | 'official_response' | 'media_report' | 'influencer_repost'
@@ -10,6 +10,16 @@ export const CATEGORY_LABELS: Record<Category, string> = {
   quality: '质量质疑',
   fake_ad: '虚假宣传',
   price: '价格争议',
+  other: '其他',
+}
+
+export const CATEGORY_COLORS: Record<Category, string> = {
+  abuse: '#EF4444',
+  boycott: '#8B5CF6',
+  quality: '#EAB308',
+  fake_ad: '#F97316',
+  price: '#3B82F6',
+  other: '#6B7280',
 }
 
 export const CHANNEL_LABELS: Record<Channel, string> = {

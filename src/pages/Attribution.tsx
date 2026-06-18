@@ -1,19 +1,11 @@
 import { useState } from 'react'
 import { useStore } from '@/store/useStore'
-import { CATEGORY_LABELS, type Category } from '@/types'
+import { CATEGORY_LABELS, CATEGORY_COLORS, type Category } from '@/types'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts'
 import { DndContext, DragEndEvent, DragOverlay, useDraggable, useDroppable } from '@dnd-kit/core'
 import { GripVertical, Merge, X } from 'lucide-react'
 
-const CATEGORIES: Category[] = ['abuse', 'boycott', 'quality', 'fake_ad', 'price']
-
-const CAT_COLORS: Record<Category, string> = {
-  abuse: '#EF4444',
-  boycott: '#8B5CF6',
-  quality: '#EAB308',
-  fake_ad: '#F97316',
-  price: '#3B82F6',
-}
+const CATEGORIES: Category[] = ['abuse', 'boycott', 'quality', 'fake_ad', 'price', 'other']
 
 const BADGE_CLASS: Record<Category, string> = {
   abuse: 'badge-abuse',
@@ -21,6 +13,7 @@ const BADGE_CLASS: Record<Category, string> = {
   quality: 'badge-quality',
   fake_ad: 'badge-fake_ad',
   price: 'badge-price',
+  other: 'badge-other',
 }
 
 const CAT_BTN_ACTIVE: Record<Category, string> = {
@@ -29,6 +22,7 @@ const CAT_BTN_ACTIVE: Record<Category, string> = {
   quality: 'bg-cat-quality/15 text-cat-quality border-l-2 border-cat-quality',
   fake_ad: 'bg-cat-fake_ad/15 text-cat-fake_ad border-l-2 border-cat-fake_ad',
   price: 'bg-cat-price/15 text-cat-price border-l-2 border-cat-price',
+  other: 'bg-cat-other/15 text-cat-other border-l-2 border-cat-other',
 }
 
 function DraggableWordCard({ groupId, mainWord, mergedWords, totalCount, category }: {
@@ -135,7 +129,7 @@ export default function Attribution() {
                 : 'text-zinc-400 hover:text-zinc-200 hover:bg-surface-50'
             }`}
           >
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CAT_COLORS[cat] }} />
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: CATEGORY_COLORS[cat] }} />
             {CATEGORY_LABELS[cat]}
           </button>
         ))}
@@ -189,7 +183,7 @@ export default function Attribution() {
                 />
                 <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={18}>
                   {chartData.map((_, i) => (
-                    <Cell key={i} fill={CAT_COLORS[activeCat]} fillOpacity={0.7 + i * 0.05} />
+                    <Cell key={i} fill={CATEGORY_COLORS[activeCat]} fillOpacity={0.7 + i * 0.05} />
                   ))}
                 </Bar>
               </BarChart>

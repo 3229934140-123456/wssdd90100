@@ -59,6 +59,7 @@
   .badge-quality { @apply badge bg-cat-quality/20 text-cat-quality; }
   .badge-fake_ad { @apply badge bg-cat-fake_ad/20 text-cat-fake_ad; }
   .badge-price { @apply badge bg-cat-price/20 text-cat-price; }
+  .badge-other { @apply badge bg-zinc-500/20 text-zinc-400; }
 
   .stat-card {
     @apply card flex flex-col gap-1;

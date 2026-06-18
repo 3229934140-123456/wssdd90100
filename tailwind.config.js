@@ -28,6 +28,7 @@ export default {
           quality: '#EAB308',
           fake_ad: '#F97316',
           price: '#3B82F6',
+          other: '#6B7280',
         },
       },
       fontFamily: {

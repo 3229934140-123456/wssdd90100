@@ -1,8 +1,8 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useStore, parseSafeInt } from '@/store/useStore'
-import { CATEGORY_LABELS, CHANNEL_LABELS } from '@/types'
+import { CATEGORY_LABELS, CHANNEL_LABELS, CATEGORY_COLORS } from '@/types'
 import type { Category, Channel, SensitiveRecord } from '@/types'
-import { Upload, FileSpreadsheet, Database, Hash, Calendar, AlertTriangle, AlertCircle } from 'lucide-react'
+import { Upload, FileSpreadsheet, Database, Hash, Calendar, AlertTriangle, AlertCircle, Plus, RefreshCw, XCircle, FileQuestion } from 'lucide-react'
 
 const CHANNEL_COLORS: Record<Channel, string> = {
   weibo: 'bg-red-500/20 text-red-400',
@@ -18,9 +18,10 @@ const CATEGORY_BADGE: Record<Category, string> = {
   quality: 'badge-quality',
   fake_ad: 'badge-fake_ad',
   price: 'badge-price',
+  other: 'badge-other',
 }
 
-const VALID_CATEGORIES: Category[] = ['abuse', 'boycott', 'quality', 'fake_ad', 'price']
+const VALID_CATEGORIES: Category[] = ['abuse', 'boycott', 'quality', 'fake_ad', 'price', 'other']
 const VALID_CHANNELS: Channel[] = ['weibo', 'douyin', 'xiaohongshu', 'wechat', 'other']
 
 interface ParsingReport {
@@ -30,6 +31,7 @@ interface ParsingReport {
   categoryFallback: number
   channelFallback: number
   countFallback: number
+  mode: 'replace' | 'append' | 'none'
 }
 
 export default function DataImport() {
@@ -39,6 +41,7 @@ export default function DataImport() {
   const setRecords = useStore((s) => s.setRecords)
   const addRecords = useStore((s) => s.addRecords)
   const [dragOver, setDragOver] = useState(false)
+  const [appendDragOver, setAppendDragOver] = useState(false)
   const [report, setReport] = useState<ParsingReport | null>(null)
 
   const totalRecords = records.length
@@ -79,7 +82,7 @@ export default function DataImport() {
       let category = getVal('category') as Category
       let categoryFallback = false
       if (!category || !validCategories.has(category)) {
-        category = 'price'
+        category = 'other'
         categoryFallback = true
       }
 
@@ -117,25 +120,28 @@ export default function DataImport() {
   )
 
   const handleFile = useCallback(
-    (file: File, append: boolean) => {
+    (file: File, mode: 'replace' | 'append') => {
       const reader = new FileReader()
       reader.onload = (e) => {
         const text = e.target?.result as string
         const lines = text.trim().split('\n')
-        if (lines.length < 2) return
 
-        const headers = lines[0].split(',').map((h) => h.trim())
+        const hasHeader = lines.length > 0 && lines[0].toLowerCase().includes('word')
+        const dataLines = hasHeader ? lines.slice(1) : lines
+        const headers = hasHeader ? lines[0].split(',').map((h) => h.trim()) : ['word', 'category', 'hitTime', 'source', 'channel', 'count']
+
         const parsed: SensitiveRecord[] = []
         const report: ParsingReport = {
-          total: lines.length - 1,
+          total: dataLines.length,
           valid: 0,
           skipped: 0,
           categoryFallback: 0,
           channelFallback: 0,
           countFallback: 0,
+          mode,
         }
 
-        lines.slice(1).forEach((line, i) => {
+        dataLines.forEach((line, i) => {
           const { record, flags } = parseLine(line, headers, i)
           if (record) {
             parsed.push(record)
@@ -149,10 +155,12 @@ export default function DataImport() {
         })
 
         setReport(report)
-        if (append) {
-          addRecords(parsed)
-        } else {
-          setRecords(parsed)
+        if (parsed.length > 0) {
+          if (mode === 'replace') {
+            setRecords(parsed)
+          } else {
+            addRecords(parsed)
+          }
         }
       }
       reader.readAsText(file)
@@ -160,25 +168,47 @@ export default function DataImport() {
     [parseLine, addRecords, setRecords]
   )
 
-  const onDrop = useCallback(
+  const onReplaceDrop = useCallback(
     (e: React.DragEvent) => {
       e.preventDefault()
       setDragOver(false)
       const file = e.dataTransfer.files[0]
-      if (file) handleFile(file, dataLoaded)
+      if (file) handleFile(file, 'replace')
     },
-    [handleFile, dataLoaded]
+    [handleFile]
   )
 
-  const onFileInput = useCallback(
+  const onAppendDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      setAppendDragOver(false)
+      const file = e.dataTransfer.files[0]
+      if (file) handleFile(file, 'append')
+    },
+    [handleFile]
+  )
+
+  const onReplaceFile = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
-      if (file) handleFile(file, dataLoaded)
+      if (file) handleFile(file, 'replace')
+      e.target.value = ''
     },
-    [handleFile, dataLoaded]
+    [handleFile]
+  )
+
+  const onAppendFile = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      if (file) handleFile(file, 'append')
+      e.target.value = ''
+    },
+    [handleFile]
   )
 
   const previewRecords = records.slice(0, 20)
+
+  const showEmptyReport = report && report.valid === 0 && report.total > 0
 
   return (
     <div className="p-6 space-y-6">
@@ -206,11 +236,17 @@ export default function DataImport() {
       )}
 
       {report && (
-        <div className="card border border-accent/30 bg-accent/5">
+        <div className={`card border ${showEmptyReport ? 'border-red-500/50 bg-red-500/10' : 'border-accent/30 bg-accent/5'}`}>
           <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-accent mt-0.5 shrink-0" />
+            {showEmptyReport ? (
+              <XCircle className="w-5 h-5 text-red-400 mt-0.5 shrink-0" />
+            ) : (
+              <AlertCircle className="w-5 h-5 text-accent mt-0.5 shrink-0" />
+            )}
             <div className="flex-1">
-              <h3 className="font-display font-semibold text-sm text-zinc-200 mb-1">数据解析报告</h3>
+              <h3 className="font-display font-semibold text-sm text-zinc-200 mb-1">
+                {report.mode === 'replace' ? '覆盖导入' : '追加导入'} · 数据解析报告
+              </h3>
               <div className="grid grid-cols-6 gap-2 text-xs">
                 <div>
                   <p className="text-zinc-500">总行数</p>
@@ -237,6 +273,11 @@ export default function DataImport() {
                   <p className="font-mono text-yellow-400">{report.countFallback}</p>
                 </div>
               </div>
+              {showEmptyReport && (
+                <p className="text-xs text-red-400 mt-2">
+                  所有行均被跳过，请检查 CSV 是否包含 word 列，以及数据格式是否正确
+                </p>
+              )}
             </div>
             <button onClick={() => setReport(null)} className="text-zinc-500 hover:text-zinc-300">
               <AlertCircle className="w-4 h-4" />
@@ -251,14 +292,14 @@ export default function DataImport() {
             className={`w-full max-w-lg border-2 border-dashed rounded-lg p-10 flex flex-col items-center gap-4 transition-colors ${dragOver ? 'border-accent bg-accent/10' : 'border-zinc-700'}`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
             onDragLeave={() => setDragOver(false)}
-            onDrop={onDrop}
+            onDrop={onReplaceDrop}
           >
             <Upload className="w-10 h-10 text-zinc-500" />
             <p className="text-zinc-400">拖放 CSV 文件到此处</p>
             <label className="btn-primary cursor-pointer flex items-center gap-2">
               <FileSpreadsheet className="w-4 h-4" />
               选择文件
-              <input type="file" accept=".csv" className="hidden" onChange={onFileInput} />
+              <input type="file" accept=".csv" className="hidden" onChange={onReplaceFile} />
             </label>
           </div>
           <div className="text-zinc-600 text-sm">或</div>
@@ -290,29 +331,68 @@ export default function DataImport() {
                   {previewRecords.map((r) => (
                     <tr key={r.id} className="border-b border-zinc-800/50 hover:bg-surface-50/50">
                       <td className="py-2 pr-4 font-medium">{r.word || '-'}</td>
-                      <td className="py-2 pr-4"><span className={CATEGORY_BADGE[r.category]}>{CATEGORY_LABELS[r.category]}</span></td>
-                      <td className="py-2 pr-4"><span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${CHANNEL_COLORS[r.channel]}`}>{CHANNEL_LABELS[r.channel]}</span></td>
+                      <td className="py-2 pr-4">
+                        <span className={CATEGORY_BADGE[r.category]}>
+                          {CATEGORY_LABELS[r.category]}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-4">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${CHANNEL_COLORS[r.channel]}`}>
+                          {CHANNEL_LABELS[r.channel]}
+                        </span>
+                      </td>
                       <td className="py-2 pr-4 text-zinc-400 font-mono text-xs">{r.hitTime?.slice(0, 16) || '-'}</td>
                       <td className="py-2 pr-4 text-zinc-400 truncate max-w-[200px]">{r.source || '-'}</td>
                       <td className="py-2 text-right font-mono text-accent">{r.count}</td>
                     </tr>
                   ))}
+                  {previewRecords.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="py-8 text-center text-zinc-500">
+                        <FileQuestion className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        暂无数据
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
-          <div
-            className={`card border-2 border-dashed flex items-center justify-center gap-3 py-4 transition-colors cursor-pointer ${dragOver ? 'border-accent bg-accent/10' : 'border-zinc-700'}`}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={onDrop}
-          >
-            <Upload className="w-4 h-4 text-zinc-500" />
-            <span className="text-zinc-500 text-sm">拖放 CSV 文件追加数据</span>
-            <label className="text-accent text-sm cursor-pointer hover:underline">
-              选择文件
-              <input type="file" accept=".csv" className="hidden" onChange={onFileInput} />
-            </label>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div
+              className={`card border-2 border-dashed flex flex-col items-center justify-center gap-3 py-8 transition-colors cursor-pointer ${dragOver ? 'border-accent bg-accent/10' : 'border-zinc-700 hover:border-zinc-600'}`}
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={onReplaceDrop}
+            >
+              <RefreshCw className="w-6 h-6 text-zinc-500" />
+              <div className="text-center">
+                <p className="text-sm text-zinc-300 font-medium">覆盖导入</p>
+                <p className="text-xs text-zinc-500 mt-1">用新文件替换所有数据</p>
+              </div>
+              <label className="text-accent text-sm cursor-pointer hover:underline mt-1">
+                选择文件
+                <input type="file" accept=".csv" className="hidden" onChange={onReplaceFile} />
+              </label>
+            </div>
+
+            <div
+              className={`card border-2 border-dashed flex flex-col items-center justify-center gap-3 py-8 transition-colors cursor-pointer ${appendDragOver ? 'border-emerald-500 bg-emerald-500/10' : 'border-zinc-700 hover:border-zinc-600'}`}
+              onDragOver={(e) => { e.preventDefault(); setAppendDragOver(true) }}
+              onDragLeave={() => setAppendDragOver(false)}
+              onDrop={onAppendDrop}
+            >
+              <Plus className="w-6 h-6 text-zinc-500" />
+              <div className="text-center">
+                <p className="text-sm text-zinc-300 font-medium">追加导入</p>
+                <p className="text-xs text-zinc-500 mt-1">将新文件追加到现有数据</p>
+              </div>
+              <label className="text-emerald-400 text-sm cursor-pointer hover:underline mt-1">
+                选择文件
+                <input type="file" accept=".csv" className="hidden" onChange={onAppendFile} />
+              </label>
+            </div>
           </div>
         </>
       )}

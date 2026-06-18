@@ -31,7 +31,7 @@ interface AppState {
   getTopWords: (limit: number) => { word: string; count: number }[]
   getChannelDistribution: () => { channel: Channel; count: number }[]
   getCategoryDistribution: () => { category: Category; count: number }[]
-  getDisposalTimes: () => { avg: number; max: number; min: number }
+  getDisposalTimes: () => { avg: number; max: number; min: number; pairs: { spike: string; response: string; hours: number; type: string }[] }
 }
 
 interface EventNote {
@@ -301,64 +301,63 @@ export const useStore = create<AppState>((set, get) => ({
 
   getDisposalTimes: () => {
     const events = get().timelineEvents
-    const spikes = events.filter((e) => e.type === 'spike').sort((a, b) =>
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    )
+    const spikes = events
+      .filter((e) => e.type === 'spike')
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
 
     const responseTypes: EventNote['noteType'][] = ['official_response', 'media_report', 'influencer_repost']
 
-    const intervals: number[] = []
-
-    spikes.forEach((spike) => {
-      const spikeTime = new Date(spike.timestamp).getTime()
-
-      const allNotes: EventNote[] = []
-      events.forEach((e) => {
-        e.notes.forEach((n) => {
-          if (responseTypes.includes(n.noteType)) {
-            allNotes.push(n)
-          }
-        })
-      })
-
-      allNotes.forEach((note) => {
-        const noteTime = new Date(note.createdAt).getTime()
-        if (noteTime >= spikeTime) {
-          const diffHours = (noteTime - spikeTime) / (1000 * 60 * 60)
-          if (diffHours > 0 && diffHours < 720) {
-            intervals.push(diffHours)
-          }
-        }
-      })
-
-      const laterSpikes = spikes
-        .filter((s) => new Date(s.timestamp).getTime() > spikeTime)
-        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-
-      const nextSpikeTime = laterSpikes.length > 0 ? new Date(laterSpikes[0].timestamp).getTime() : null
-
-      spike.notes.forEach((note) => {
-        if (responseTypes.includes(note.noteType)) {
-          const noteTime = new Date(note.createdAt).getTime()
-          if (noteTime >= spikeTime && (!nextSpikeTime || noteTime < nextSpikeTime)) {
-            const diffHours = (noteTime - spikeTime) / (1000 * 60 * 60)
-            if (diffHours > 0 && diffHours < 720) {
-              intervals.push(diffHours)
-            }
-          }
+    const allResponses: { note: EventNote; time: number }[] = []
+    events.forEach((e) => {
+      e.notes.forEach((n) => {
+        if (responseTypes.includes(n.noteType)) {
+          allResponses.push({ note: n, time: new Date(n.createdAt).getTime() })
         }
       })
     })
+    allResponses.sort((a, b) => a.time - b.time)
 
-    if (intervals.length === 0) {
-      return { avg: 0, max: 0, min: 0 }
+    const pairs: { spike: string; response: string; hours: number; type: string }[] = []
+    const usedNoteIds = new Set<string>()
+
+    spikes.forEach((spike, i) => {
+      const spikeTime = new Date(spike.timestamp).getTime()
+      const nextSpikeTime = i + 1 < spikes.length ? new Date(spikes[i + 1].timestamp).getTime() : Infinity
+
+      let best: { note: EventNote; time: number; diff: number } | null = null
+
+      for (const r of allResponses) {
+        if (usedNoteIds.has(r.note.id)) continue
+        if (r.time <= spikeTime) continue
+        if (r.time >= nextSpikeTime) continue
+
+        const diff = r.time - spikeTime
+        if (!best || diff < best.diff) {
+          best = { note: r.note, time: r.time, diff }
+        }
+      }
+
+      if (best) {
+        usedNoteIds.add(best.note.id)
+        pairs.push({
+          spike: spike.description,
+          response: best.note.content,
+          hours: best.diff / (1000 * 60 * 60),
+          type: best.note.noteType,
+        })
+      }
+    })
+
+    if (pairs.length === 0) {
+      return { avg: 0, max: 0, min: 0, pairs: [] }
     }
 
-    const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length
-    const max = Math.max(...intervals)
-    const min = Math.min(...intervals)
+    const hours = pairs.map((p) => p.hours)
+    const avg = hours.reduce((a, b) => a + b, 0) / hours.length
+    const max = Math.max(...hours)
+    const min = Math.min(...hours)
 
-    return { avg, max, min }
+    return { avg, max, min, pairs }
   },
 }))
 

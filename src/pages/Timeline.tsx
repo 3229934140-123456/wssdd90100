@@ -25,6 +25,7 @@ const CAT_ACTIVE_CLASS: Record<Category, string> = {
   quality: 'bg-cat-quality text-zinc-900',
   fake_ad: 'bg-cat-fake_ad text-white',
   price: 'bg-cat-price text-white',
+  other: 'bg-zinc-500 text-white',
 }
 
 export default function Timeline() {
