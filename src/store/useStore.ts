@@ -12,6 +12,7 @@ interface AppState {
   loadMockData: () => void
   addRecords: (records: SensitiveRecord[]) => void
   setRecords: (records: SensitiveRecord[]) => void
+  clearAll: () => void
 
   mergeWords: (fromGroupId: string, toGroupId: string) => void
   unmergeWord: (groupId: string, word: string) => void
@@ -20,6 +21,8 @@ interface AppState {
 
   addTimelineNote: (eventId: string, noteType: EventNote['noteType'], content: string, noteTimestamp?: string) => void
   removeTimelineNote: (eventId: string, noteId: string) => void
+  moveTimelineNote: (noteId: string, fromEventId: string, toEventId: string) => void
+  copyTimelineNote: (noteId: string, fromEventId: string, toEventId: string) => void
   generateTimelineFromRecords: () => void
 
   addWatchItem: (word: string, priority: WatchItem['priority'], reason: string) => void
@@ -28,10 +31,12 @@ interface AppState {
 
   getRecordsByCategory: (category: Category) => SensitiveRecord[]
   getRecordsByChannel: (channel: Channel) => SensitiveRecord[]
-  getTopWords: (limit: number) => { word: string; count: number }[]
+  getTopWords: (limit: number) => { word: string; count: number; category: Category }[]
   getChannelDistribution: () => { channel: Channel; count: number }[]
   getCategoryDistribution: () => { category: Category; count: number }[]
-  getDisposalTimes: () => { avg: number; max: number; min: number; pairs: { spike: string; response: string; hours: number; type: string }[] }
+  getDisposalTimes: () => { avg: number; max: number; min: number; pairs: { spike: string; response: string; hours: number; type: string; noteId: string; spikeId: string }[] }
+  getSpikeSummaries: () => { id: string; date: string; topWords: { word: string; count: number }[]; totalHits: number; magnitude: number }[]
+  getDateRange: () => { start: string; end: string; days: number } | null
 }
 
 interface EventNote {
@@ -145,7 +150,17 @@ export const useStore = create<AppState>((set, get) => ({
       wordGroups: generateGroupsFromRecords(records),
       timelineEvents: generateTimelineFromRecords(records),
       watchItems: [],
-      dataLoaded: true,
+      dataLoaded: records.length > 0 ? true : false,
+    })
+  },
+
+  clearAll: () => {
+    set({
+      records: [],
+      wordGroups: [],
+      timelineEvents: [],
+      watchItems: [],
+      dataLoaded: false,
     })
   },
 
@@ -243,6 +258,40 @@ export const useStore = create<AppState>((set, get) => ({
       ),
     })),
 
+  moveTimelineNote: (noteId, fromEventId, toEventId) =>
+    set((s) => {
+      const fromEvent = s.timelineEvents.find((e) => e.id === fromEventId)
+      if (!fromEvent) return {}
+      const note = fromEvent.notes.find((n) => n.id === noteId)
+      if (!note) return {}
+      return {
+        timelineEvents: s.timelineEvents.map((e) => {
+          if (e.id === fromEventId) return { ...e, notes: e.notes.filter((n) => n.id !== noteId) }
+          if (e.id === toEventId) return { ...e, notes: [...e.notes, { ...note, eventId: toEventId }] }
+          return e
+        }),
+      }
+    }),
+
+  copyTimelineNote: (noteId, fromEventId, toEventId) =>
+    set((s) => {
+      const fromEvent = s.timelineEvents.find((e) => e.id === fromEventId)
+      if (!fromEvent) return {}
+      const note = fromEvent.notes.find((n) => n.id === noteId)
+      if (!note) return {}
+      return {
+        timelineEvents: s.timelineEvents.map((e) => {
+          if (e.id === toEventId) {
+            return {
+              ...e,
+              notes: [...e.notes, { ...note, id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, eventId: toEventId }],
+            }
+          }
+          return e
+        }),
+      }
+    }),
+
   generateTimelineFromRecords: () => {
     set((s) => ({
       timelineEvents: generateTimelineFromRecords(s.records),
@@ -273,12 +322,14 @@ export const useStore = create<AppState>((set, get) => ({
   getRecordsByChannel: (channel) => get().records.filter((r) => r.channel === channel),
 
   getTopWords: (limit) => {
-    const wordMap = new Map<string, number>()
+    const wordMap = new Map<string, { count: number; category: Category }>()
     get().records.forEach((r) => {
-      wordMap.set(r.word, (wordMap.get(r.word) || 0) + r.count)
+      const existing = wordMap.get(r.word)
+      if (existing) existing.count += r.count
+      else wordMap.set(r.word, { count: r.count, category: r.category })
     })
     return Array.from(wordMap.entries())
-      .map(([word, count]) => ({ word, count }))
+      .map(([word, data]) => ({ word, count: data.count, category: data.category }))
       .sort((a, b) => b.count - a.count)
       .slice(0, limit)
   },
@@ -299,6 +350,47 @@ export const useStore = create<AppState>((set, get) => ({
     return Array.from(catMap.entries()).map(([category, count]) => ({ category, count }))
   },
 
+  getDateRange: () => {
+    const rs = get().records
+    if (rs.length === 0) return null
+    const dates = rs.map((r) => new Date(r.hitTime).getTime()).sort((a, b) => a - b)
+    const start = new Date(dates[0])
+    const end = new Date(dates[dates.length - 1])
+    const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)))
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return {
+      start: `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`,
+      end: `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(end.getDate())}`,
+      days,
+    }
+  },
+
+  getSpikeSummaries: () => {
+    const rs = get().records
+    const events = get().timelineEvents.filter((e) => e.type === 'spike')
+    if (rs.length === 0 || events.length === 0) return []
+    return events
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+      .map((ev) => {
+        const day = ev.timestamp.slice(0, 10)
+        const dayRecords = rs.filter((r) => r.hitTime.slice(0, 10) === day)
+        const totalHits = dayRecords.reduce((s, r) => s + r.count, 0)
+        const wordMap = new Map<string, number>()
+        dayRecords.forEach((r) => wordMap.set(r.word, (wordMap.get(r.word) || 0) + r.count))
+        const topWords = Array.from(wordMap.entries())
+          .map(([word, count]) => ({ word, count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 3)
+        return {
+          id: ev.id,
+          date: day,
+          topWords,
+          totalHits,
+          magnitude: ev.spikeMagnitude || 0,
+        }
+      })
+  },
+
   getDisposalTimes: () => {
     const events = get().timelineEvents
     const spikes = events
@@ -317,7 +409,7 @@ export const useStore = create<AppState>((set, get) => ({
     })
     allResponses.sort((a, b) => a.time - b.time)
 
-    const pairs: { spike: string; response: string; hours: number; type: string }[] = []
+    const pairs: { spike: string; response: string; hours: number; type: string; noteId: string; spikeId: string }[] = []
     const usedNoteIds = new Set<string>()
 
     spikes.forEach((spike, i) => {
@@ -344,6 +436,8 @@ export const useStore = create<AppState>((set, get) => ({
           response: best.note.content,
           hours: best.diff / (1000 * 60 * 60),
           type: best.note.noteType,
+          noteId: best.note.id,
+          spikeId: spike.id,
         })
       }
     })

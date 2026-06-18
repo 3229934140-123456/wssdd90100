@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useStore } from '@/store/useStore'
-import { CATEGORY_LABELS, NOTE_TYPE_LABELS, type Category, type NoteType } from '@/types'
-import { Calendar, MessageSquare, Newspaper, Megaphone, Plus, X, Filter } from 'lucide-react'
+import { CATEGORY_LABELS, NOTE_TYPE_LABELS, type Category, type NoteType, type TimelineEvent } from '@/types'
+import { Calendar, MessageSquare, Newspaper, Megaphone, Plus, X, Filter, ArrowRightLeft, Copy, ChevronDown } from 'lucide-react'
 
 const EVENT_COLORS: Record<string, string> = {
   spike: '#F97316',
@@ -28,10 +28,17 @@ const CAT_ACTIVE_CLASS: Record<Category, string> = {
   other: 'bg-zinc-500 text-white',
 }
 
+function formatEventDate(ts: string) {
+  const d = new Date(ts)
+  return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
 export default function Timeline() {
   const timelineEvents = useStore((s) => s.timelineEvents)
   const addTimelineNote = useStore((s) => s.addTimelineNote)
   const removeTimelineNote = useStore((s) => s.removeTimelineNote)
+  const moveTimelineNote = useStore((s) => s.moveTimelineNote)
+  const copyTimelineNote = useStore((s) => s.copyTimelineNote)
   const records = useStore((s) => s.records)
   const [selectedCategories, setSelectedCategories] = useState<Category[]>([])
   const [dateFrom, setDateFrom] = useState('')
@@ -41,6 +48,7 @@ export default function Timeline() {
   const [newNoteContent, setNewNoteContent] = useState('')
   const [newNoteTimestamp, setNewNoteTimestamp] = useState('')
   const [filterOpen, setFilterOpen] = useState(false)
+  const [noteActionMenu, setNoteActionMenu] = useState<{ noteId: string; eventId: string; mode: 'move' | 'copy' } | null>(null)
 
   const filtered = timelineEvents.filter((e) => {
     if (selectedCategories.length > 0) {
@@ -56,6 +64,10 @@ export default function Timeline() {
 
   const selectedEvent = timelineEvents.find((e) => e.id === selectedEventId)
 
+  const spikeEvents: TimelineEvent[] = timelineEvents
+    .filter((e) => e.type === 'spike')
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+
   const toggleCategory = (cat: Category) => {
     setSelectedCategories((prev) =>
       prev.includes(cat) ? prev.filter((c) => c !== cat) : [...prev, cat]
@@ -67,6 +79,17 @@ export default function Timeline() {
     addTimelineNote(selectedEventId, newNoteType, newNoteContent.trim(), newNoteTimestamp || undefined)
     setNewNoteContent('')
     setNewNoteTimestamp('')
+  }
+
+  const handleMoveCopyConfirm = (targetEventId: string) => {
+    if (!noteActionMenu) return
+    const { noteId, eventId, mode } = noteActionMenu
+    if (mode === 'move') {
+      moveTimelineNote(noteId, eventId, targetEventId)
+    } else {
+      copyTimelineNote(noteId, eventId, targetEventId)
+    }
+    setNoteActionMenu(null)
   }
 
   const sortedEvents = [...filtered].sort(
@@ -177,7 +200,7 @@ export default function Timeline() {
                 事件详情
               </h2>
               <button
-                onClick={() => setSelectedEventId(null)}
+                onClick={() => { setSelectedEventId(null); setNoteActionMenu(null) }}
                 className="text-zinc-500 hover:text-zinc-200 transition-colors"
               >
                 <X size={16} />
@@ -219,34 +242,100 @@ export default function Timeline() {
               </div>
 
               <div className="border-t border-zinc-800 pt-3">
-                <h3 className="text-xs font-display font-bold text-zinc-400 mb-2">备注</h3>
+                <h3 className="text-xs font-display font-bold text-zinc-400 mb-2">
+                  备注 ({selectedEvent.notes.length})
+                </h3>
                 {selectedEvent.notes.length === 0 ? (
                   <p className="text-xs text-zinc-600">暂无备注</p>
                 ) : (
                   <div className="space-y-2">
-                    {selectedEvent.notes.map((note) => (
-                      <div
-                        key={note.id}
-                        className="bg-surface-50 rounded-lg p-2.5 group"
-                      >
-                        <div className="flex items-center justify-between mb-1">
-                          <div className="flex items-center gap-1.5 text-zinc-400">
-                            {NOTE_ICONS[note.noteType]}
-                            <span className="text-xs">{NOTE_TYPE_LABELS[note.noteType]}</span>
+                    {selectedEvent.notes.map((note) => {
+                      const menuOpen = noteActionMenu?.noteId === note.id && noteActionMenu?.eventId === selectedEvent.id
+                      return (
+                        <div
+                          key={note.id}
+                          className="bg-surface-50 rounded-lg p-2.5 group relative"
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-1.5 text-zinc-400">
+                              {NOTE_ICONS[note.noteType]}
+                              <span className="text-xs">{NOTE_TYPE_LABELS[note.noteType]}</span>
+                            </div>
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <div className="relative">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setNoteActionMenu(menuOpen && noteActionMenu?.mode === 'copy' ? null : { noteId: note.id, eventId: selectedEvent.id, mode: 'copy' })
+                                  }}
+                                  className="p-1 rounded hover:bg-surface-200 text-zinc-500 hover:text-accent transition-colors"
+                                  title="复制到其他节点"
+                                >
+                                  <Copy size={12} />
+                                </button>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setNoteActionMenu(menuOpen && noteActionMenu?.mode === 'move' ? null : { noteId: note.id, eventId: selectedEvent.id, mode: 'move' })
+                                  }}
+                                  className="p-1 rounded hover:bg-surface-200 text-zinc-500 hover:text-indigo-400 transition-colors"
+                                  title="移动到其他节点"
+                                >
+                                  <ArrowRightLeft size={12} />
+                                </button>
+                              </div>
+                              <button
+                                onClick={() => removeTimelineNote(selectedEvent.id, note.id)}
+                                className="p-1 rounded hover:bg-surface-200 text-zinc-600 hover:text-red-400 transition-colors"
+                                title="删除"
+                              >
+                                <X size={12} />
+                              </button>
+                            </div>
                           </div>
-                          <button
-                            onClick={() => removeTimelineNote(selectedEvent.id, note.id)}
-                            className="text-zinc-600 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
-                          >
-                            <X size={12} />
-                          </button>
+                          <p className="text-xs text-zinc-300">{note.content}</p>
+                          <p className="text-[10px] text-zinc-600 font-mono mt-1">
+                            {new Date(note.createdAt).toLocaleString('zh-CN')}
+                          </p>
+
+                          {menuOpen && (
+                            <div className="absolute right-0 top-7 z-20 bg-surface-200 border border-zinc-700 rounded-lg shadow-xl shadow-black/40 p-1 min-w-[180px] max-h-60 overflow-y-auto">
+                              <div className="px-2 py-1.5 text-[10px] text-zinc-500 uppercase tracking-wider border-b border-zinc-800 mb-1">
+                                {noteActionMenu?.mode === 'copy' ? '复制到节点…' : '移动到节点…'}
+                              </div>
+                              {spikeEvents.map((ev) => {
+                                const disabled = ev.id === selectedEvent.id
+                                return (
+                                  <button
+                                    key={ev.id}
+                                    disabled={disabled}
+                                    onClick={(e) => { e.stopPropagation(); handleMoveCopyConfirm(ev.id) }}
+                                    className={`w-full text-left px-2 py-1.5 text-xs rounded transition-colors flex items-center justify-between gap-2 ${
+                                      disabled
+                                        ? 'text-zinc-600 cursor-not-allowed'
+                                        : 'text-zinc-200 hover:bg-accent/20 hover:text-accent'
+                                    }`}
+                                  >
+                                    <span className="truncate flex-1">{formatEventDate(ev.timestamp)}</span>
+                                    <span className="text-[10px] text-zinc-500 font-mono shrink-0">
+                                      强度 {ev.spikeMagnitude}
+                                    </span>
+                                  </button>
+                                )
+                              })}
+                              <div className="mt-1 pt-1 border-t border-zinc-800">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setNoteActionMenu(null) }}
+                                  className="w-full text-left px-2 py-1 text-xs rounded text-zinc-500 hover:text-zinc-300"
+                                >
+                                  取消
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        <p className="text-xs text-zinc-300">{note.content}</p>
-                        <p className="text-[10px] text-zinc-600 font-mono mt-1">
-                          {new Date(note.createdAt).toLocaleString('zh-CN')}
-                        </p>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -288,6 +377,11 @@ export default function Timeline() {
                 <Plus size={14} />
                 添加备注
               </button>
+              {selectedEvent.notes.length > 0 && spikeEvents.length > 1 && (
+                <p className="text-[10px] text-zinc-600 text-center">
+                  提示：将鼠标悬停在备注上可复制或移动到其他节点
+                </p>
+              )}
             </div>
           </div>
         )}
