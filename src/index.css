@@ -1,0 +1,74 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  font-family: "Noto Sans SC", "DM Sans", -apple-system, BlinkMacSystemFont, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f46 transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: #3f3f46;
+  border-radius: 3px;
+}
+
+@layer base {
+  body {
+    @apply bg-surface text-zinc-200 font-body;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface-50 border border-zinc-800 rounded-lg p-5;
+  }
+
+  .btn-primary {
+    @apply bg-accent hover:bg-accent-light text-white font-medium px-4 py-2 rounded-lg transition-all duration-200 shadow-lg shadow-accent/20 hover:shadow-accent/30;
+  }
+
+  .btn-ghost {
+    @apply text-zinc-400 hover:text-zinc-200 hover:bg-surface-50 px-3 py-1.5 rounded-lg transition-all duration-200;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+  }
+
+  .badge-abuse { @apply badge bg-cat-abuse/20 text-cat-abuse; }
+  .badge-boycott { @apply badge bg-cat-boycott/20 text-cat-boycott; }
+  .badge-quality { @apply badge bg-cat-quality/20 text-cat-quality; }
+  .badge-fake_ad { @apply badge bg-cat-fake_ad/20 text-cat-fake_ad; }
+  .badge-price { @apply badge bg-cat-price/20 text-cat-price; }
+
+  .stat-card {
+    @apply card flex flex-col gap-1;
+  }
+
+  .stat-value {
+    @apply text-2xl font-display font-bold font-mono;
+  }
+
+  .stat-label {
+    @apply text-xs text-zinc-500 uppercase tracking-wider;
+  }
+}
