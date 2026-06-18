@@ -100,7 +100,6 @@ export default function Attribution() {
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const wordGroups = useStore((s) => s.wordGroups)
   const mergeWords = useStore((s) => s.mergeWords)
-  const moveWordToGroup = useStore((s) => s.moveWordToGroup)
 
   const filteredGroups = wordGroups.filter((g) => g.category === activeCat)
   const draggingGroup = wordGroups.find((g) => g.id === draggingId)
@@ -118,11 +117,8 @@ export default function Attribution() {
 
     const fromId = active.id as string
     const toId = over.id as string
-    const fromGroup = wordGroups.find((g) => g.id === fromId)
-    if (!fromGroup) return
 
-    moveWordToGroup(fromId, toId, fromGroup.mainWord)
-    mergeWords(toId, fromGroup.mergedWords)
+    mergeWords(fromId, toId)
   }
 
   return (

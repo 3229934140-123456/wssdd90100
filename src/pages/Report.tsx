@@ -22,6 +22,8 @@ export default function Report() {
   const topWords = useStore((s) => s.getTopWords(15))
   const channelDist = useStore((s) => s.getChannelDistribution())
   const watchItems = useStore((s) => s.watchItems)
+  const disposalTimes = useStore((s) => s.getDisposalTimes())
+  const timelineEvents = useStore((s) => s.timelineEvents)
   const addWatchItem = useStore((s) => s.addWatchItem)
   const removeWatchItem = useStore((s) => s.removeWatchItem)
   const updateWatchItem = useStore((s) => s.updateWatchItem)
@@ -122,20 +124,29 @@ export default function Report() {
             <Clock className="w-4 h-4 text-accent" />
             处置时效
           </h2>
-          <div className="grid grid-cols-1 gap-4">
-            <div className="stat-card">
-              <span className="stat-label">平均响应时间</span>
-              <span className="stat-value text-indigo-400">18.5<span className="text-sm text-zinc-500 ml-1">小时</span></span>
+          {disposalTimes.avg === 0 && timelineEvents.length > 0 ? (
+            <div className="card text-center py-6">
+              <p className="text-sm text-zinc-500">
+                暂无官方回应/媒体报道/达人转发数据<br />
+                请先在事件时间线中添加备注
+              </p>
             </div>
-            <div className="stat-card">
-              <span className="stat-label">最长响应时间</span>
-              <span className="stat-value text-red-400">48<span className="text-sm text-zinc-500 ml-1">小时</span></span>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              <div className="stat-card">
+                <span className="stat-label">平均响应时间</span>
+                <span className="stat-value text-indigo-400">{disposalTimes.avg.toFixed(1)}<span className="text-sm text-zinc-500 ml-1">小时</span></span>
+              </div>
+              <div className="stat-card">
+                <span className="stat-label">最长响应时间</span>
+                <span className="stat-value text-red-400">{disposalTimes.max.toFixed(1)}<span className="text-sm text-zinc-500 ml-1">小时</span></span>
+              </div>
+              <div className="stat-card">
+                <span className="stat-label">最短响应时间</span>
+                <span className="stat-value text-emerald-400">{disposalTimes.min.toFixed(1)}<span className="text-sm text-zinc-500 ml-1">小时</span></span>
+              </div>
             </div>
-            <div className="stat-card">
-              <span className="stat-label">最短响应时间</span>
-              <span className="stat-value text-emerald-400">2<span className="text-sm text-zinc-500 ml-1">小时</span></span>
-            </div>
-          </div>
+          )}
         </div>
       </div>
 

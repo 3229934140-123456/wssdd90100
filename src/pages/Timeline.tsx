@@ -38,6 +38,7 @@ export default function Timeline() {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null)
   const [newNoteType, setNewNoteType] = useState<NoteType>('official_response')
   const [newNoteContent, setNewNoteContent] = useState('')
+  const [newNoteTimestamp, setNewNoteTimestamp] = useState('')
   const [filterOpen, setFilterOpen] = useState(false)
 
   const filtered = timelineEvents.filter((e) => {
@@ -62,8 +63,9 @@ export default function Timeline() {
 
   const handleAddNote = () => {
     if (!selectedEventId || !newNoteContent.trim()) return
-    addTimelineNote(selectedEventId, newNoteType, newNoteContent.trim())
+    addTimelineNote(selectedEventId, newNoteType, newNoteContent.trim(), newNoteTimestamp || undefined)
     setNewNoteContent('')
+    setNewNoteTimestamp('')
   }
 
   const sortedEvents = [...filtered].sort(
@@ -266,6 +268,15 @@ export default function Timeline() {
                   onKeyDown={(e) => e.key === 'Enter' && handleAddNote()}
                   placeholder="输入备注内容..."
                   className="flex-1 bg-surface-50 text-zinc-200 text-xs rounded-lg px-3 py-1.5 border border-zinc-700 focus:border-accent outline-none placeholder:text-zinc-600"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-zinc-500 shrink-0">发生时间</span>
+                <input
+                  type="datetime-local"
+                  value={newNoteTimestamp}
+                  onChange={(e) => setNewNoteTimestamp(e.target.value)}
+                  className="flex-1 bg-surface-50 text-zinc-300 text-xs rounded-lg px-2 py-1 border border-zinc-700 focus:border-accent outline-none font-mono"
                 />
               </div>
               <button

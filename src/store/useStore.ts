@@ -13,13 +13,14 @@ interface AppState {
   addRecords: (records: SensitiveRecord[]) => void
   setRecords: (records: SensitiveRecord[]) => void
 
-  mergeWords: (groupId: string, words: string[]) => void
+  mergeWords: (fromGroupId: string, toGroupId: string) => void
   unmergeWord: (groupId: string, word: string) => void
-  moveWordToGroup: (fromGroupId: string, toGroupId: string, word: string) => void
+  removeGroup: (groupId: string) => void
   changeGroupCategory: (groupId: string, category: Category) => void
 
-  addTimelineNote: (eventId: string, noteType: EventNote['noteType'], content: string) => void
+  addTimelineNote: (eventId: string, noteType: EventNote['noteType'], content: string, noteTimestamp?: string) => void
   removeTimelineNote: (eventId: string, noteId: string) => void
+  generateTimelineFromRecords: () => void
 
   addWatchItem: (word: string, priority: WatchItem['priority'], reason: string) => void
   removeWatchItem: (id: string) => void
@@ -30,6 +31,7 @@ interface AppState {
   getTopWords: (limit: number) => { word: string; count: number }[]
   getChannelDistribution: () => { channel: Channel; count: number }[]
   getCategoryDistribution: () => { category: Category; count: number }[]
+  getDisposalTimes: () => { avg: number; max: number; min: number }
 }
 
 interface EventNote {
@@ -38,6 +40,73 @@ interface EventNote {
   noteType: 'official_response' | 'media_report' | 'influencer_repost' | 'other'
   content: string
   createdAt: string
+}
+
+function generateGroupsFromRecords(records: SensitiveRecord[]): WordGroup[] {
+  const wordMap = new Map<string, { word: string; category: Category; count: number }>()
+  records.forEach((r) => {
+    const existing = wordMap.get(r.word)
+    if (existing) {
+      existing.count += r.count
+    } else {
+      wordMap.set(r.word, { word: r.word, category: r.category, count: r.count })
+    }
+  })
+  return Array.from(wordMap.entries()).map(([word, data], i) => ({
+    id: `wg-auto-${i}`,
+    mainWord: data.word,
+    category: data.category,
+    mergedWords: [data.word],
+    totalCount: data.count,
+  }))
+}
+
+function generateTimelineFromRecords(records: SensitiveRecord[]): TimelineEvent[] {
+  if (records.length === 0) return []
+
+  const recordsSorted = [...records].sort((a, b) => new Date(a.hitTime).getTime() - new Date(b.hitTime).getTime())
+
+  const dayGroups = new Map<string, SensitiveRecord[]>()
+  recordsSorted.forEach((r) => {
+    const day = r.hitTime.slice(0, 10)
+    if (!dayGroups.has(day)) dayGroups.set(day, [])
+    dayGroups.get(day)!.push(r)
+  })
+
+  const days = Array.from(dayGroups.entries()).sort((a, b) => a[0].localeCompare(b[0]))
+
+  const events: TimelineEvent[] = []
+  const dayTotals = days.map(([day, recs]) => ({
+    day,
+    total: recs.reduce((sum, r) => sum + r.count, 0),
+    topWord: recs.sort((a, b) => b.count - a.count)[0]?.word || '',
+  }))
+
+  if (dayTotals.length === 0) return []
+
+  const maxTotal = Math.max(...dayTotals.map((d) => d.total))
+
+  dayTotals.forEach(({ day, total, topWord }, i) => {
+    const magnitude = Math.round((total / maxTotal) * 100)
+    if (magnitude >= 30 || i === 0 || i === dayTotals.length - 1) {
+      events.push({
+        id: `te-auto-${i}`,
+        timestamp: `${day}T09:00:00`,
+        type: 'spike',
+        description: `「${topWord}」等敏感词出现激增`,
+        spikeMagnitude: magnitude,
+        notes: [],
+      })
+    }
+  })
+
+  return events
+}
+
+function parseSafeInt(val: string, fallback: number): number {
+  if (!val || val.trim() === '') return fallback
+  const parsed = parseInt(val, 10)
+  return isNaN(parsed) ? fallback : parsed
 }
 
 export const useStore = create<AppState>((set, get) => ({
@@ -57,43 +126,85 @@ export const useStore = create<AppState>((set, get) => ({
     })
   },
 
-  addRecords: (records) => set((s) => ({ records: [...s.records, ...records] })),
-  setRecords: (records) => set({ records, dataLoaded: true }),
+  addRecords: (records) => {
+    set((s) => {
+      const allRecords = [...s.records, ...records]
+      return {
+        records: allRecords,
+        wordGroups: generateGroupsFromRecords(allRecords),
+        timelineEvents: generateTimelineFromRecords(allRecords),
+        watchItems: [],
+        dataLoaded: true,
+      }
+    })
+  },
 
-  mergeWords: (groupId, words) =>
-    set((s) => ({
-      wordGroups: s.wordGroups.map((g) =>
-        g.id === groupId
-          ? { ...g, mergedWords: [...new Set([...g.mergedWords, ...words])], totalCount: g.totalCount }
-          : g
-      ),
-    })),
+  setRecords: (records) => {
+    set({
+      records,
+      wordGroups: generateGroupsFromRecords(records),
+      timelineEvents: generateTimelineFromRecords(records),
+      watchItems: [],
+      dataLoaded: true,
+    })
+  },
 
-  unmergeWord: (groupId, word) =>
-    set((s) => ({
-      wordGroups: s.wordGroups.map((g) =>
-        g.id === groupId && g.mainWord !== word
-          ? { ...g, mergedWords: g.mergedWords.filter((w) => w !== word), totalCount: g.totalCount }
-          : g
-      ),
-    })),
-
-  moveWordToGroup: (fromGroupId, toGroupId, word) =>
+  mergeWords: (fromGroupId, toGroupId) =>
     set((s) => {
       const fromGroup = s.wordGroups.find((g) => g.id === fromGroupId)
-      if (!fromGroup || fromGroup.mainWord === word) return s
+      const toGroup = s.wordGroups.find((g) => g.id === toGroupId)
+      if (!fromGroup || !toGroup || fromGroupId === toGroupId) return s
+
+      const mergedWords = [...new Set([...toGroup.mergedWords, ...fromGroup.mergedWords])]
+      const totalCount = toGroup.totalCount + fromGroup.totalCount
+
       return {
-        wordGroups: s.wordGroups.map((g) => {
-          if (g.id === fromGroupId) {
-            return { ...g, mergedWords: g.mergedWords.filter((w) => w !== word) }
-          }
-          if (g.id === toGroupId) {
-            return { ...g, mergedWords: [...new Set([...g.mergedWords, word])] }
-          }
-          return g
-        }),
+        wordGroups: s.wordGroups
+          .filter((g) => g.id !== fromGroupId)
+          .map((g) =>
+            g.id === toGroupId
+              ? { ...g, mergedWords, totalCount }
+              : g
+          ),
       }
     }),
+
+  unmergeWord: (groupId, word) =>
+    set((s) => {
+      const group = s.wordGroups.find((g) => g.id === groupId)
+      if (!group || group.mainWord === word) return s
+
+      const remainingWords = group.mergedWords.filter((w) => w !== word)
+      if (remainingWords.length === 0) return s
+
+      const removedCount = get().records
+        .filter((r) => r.word === word && r.category === group.category)
+        .reduce((sum, r) => sum + r.count, 0)
+
+      const newGroups = s.wordGroups.map((g) => {
+        if (g.id !== groupId) return g
+        return {
+          ...g,
+          mergedWords: remainingWords,
+          totalCount: Math.max(0, g.totalCount - removedCount),
+        }
+      })
+
+      const newGroup: WordGroup = {
+        id: `wg-${Date.now()}`,
+        mainWord: word,
+        category: group.category,
+        mergedWords: [word],
+        totalCount: removedCount,
+      }
+
+      return { wordGroups: [...newGroups, newGroup] }
+    }),
+
+  removeGroup: (groupId) =>
+    set((s) => ({
+      wordGroups: s.wordGroups.filter((g) => g.id !== groupId),
+    })),
 
   changeGroupCategory: (groupId, category) =>
     set((s) => ({
@@ -102,7 +213,7 @@ export const useStore = create<AppState>((set, get) => ({
       ),
     })),
 
-  addTimelineNote: (eventId, noteType, content) =>
+  addTimelineNote: (eventId, noteType, content, noteTimestamp) =>
     set((s) => ({
       timelineEvents: s.timelineEvents.map((e) =>
         e.id === eventId
@@ -115,7 +226,7 @@ export const useStore = create<AppState>((set, get) => ({
                   eventId,
                   noteType,
                   content,
-                  createdAt: new Date().toISOString(),
+                  createdAt: noteTimestamp || new Date().toISOString(),
                 },
               ],
             }
@@ -131,6 +242,12 @@ export const useStore = create<AppState>((set, get) => ({
           : e
       ),
     })),
+
+  generateTimelineFromRecords: () => {
+    set((s) => ({
+      timelineEvents: generateTimelineFromRecords(s.records),
+    }))
+  },
 
   addWatchItem: (word, priority, reason) =>
     set((s) => ({
@@ -181,4 +298,68 @@ export const useStore = create<AppState>((set, get) => ({
     })
     return Array.from(catMap.entries()).map(([category, count]) => ({ category, count }))
   },
+
+  getDisposalTimes: () => {
+    const events = get().timelineEvents
+    const spikes = events.filter((e) => e.type === 'spike').sort((a, b) =>
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    )
+
+    const responseTypes: EventNote['noteType'][] = ['official_response', 'media_report', 'influencer_repost']
+
+    const intervals: number[] = []
+
+    spikes.forEach((spike) => {
+      const spikeTime = new Date(spike.timestamp).getTime()
+
+      const allNotes: EventNote[] = []
+      events.forEach((e) => {
+        e.notes.forEach((n) => {
+          if (responseTypes.includes(n.noteType)) {
+            allNotes.push(n)
+          }
+        })
+      })
+
+      allNotes.forEach((note) => {
+        const noteTime = new Date(note.createdAt).getTime()
+        if (noteTime >= spikeTime) {
+          const diffHours = (noteTime - spikeTime) / (1000 * 60 * 60)
+          if (diffHours > 0 && diffHours < 720) {
+            intervals.push(diffHours)
+          }
+        }
+      })
+
+      const laterSpikes = spikes
+        .filter((s) => new Date(s.timestamp).getTime() > spikeTime)
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+
+      const nextSpikeTime = laterSpikes.length > 0 ? new Date(laterSpikes[0].timestamp).getTime() : null
+
+      spike.notes.forEach((note) => {
+        if (responseTypes.includes(note.noteType)) {
+          const noteTime = new Date(note.createdAt).getTime()
+          if (noteTime >= spikeTime && (!nextSpikeTime || noteTime < nextSpikeTime)) {
+            const diffHours = (noteTime - spikeTime) / (1000 * 60 * 60)
+            if (diffHours > 0 && diffHours < 720) {
+              intervals.push(diffHours)
+            }
+          }
+        }
+      })
+    })
+
+    if (intervals.length === 0) {
+      return { avg: 0, max: 0, min: 0 }
+    }
+
+    const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length
+    const max = Math.max(...intervals)
+    const min = Math.min(...intervals)
+
+    return { avg, max, min }
+  },
 }))
+
+export { parseSafeInt }
