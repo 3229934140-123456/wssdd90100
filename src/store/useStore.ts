@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { SensitiveRecord, WordGroup, TimelineEvent, WatchItem, Category, Channel } from '@/types'
+import type { SensitiveRecord, WordGroup, TimelineEvent, WatchItem, Category, Channel, ReportSnapshot } from '@/types'
 import { MOCK_RECORDS, MOCK_WORD_GROUPS, MOCK_TIMELINE_EVENTS, MOCK_WATCH_ITEMS } from '@/data/mockData'
 
 interface AppState {
@@ -8,6 +8,9 @@ interface AppState {
   timelineEvents: TimelineEvent[]
   watchItems: WatchItem[]
   dataLoaded: boolean
+  snapshots: ReportSnapshot[]
+  selectedTimelineEventId: string | null
+  selectedWordGroupId: string | null
 
   loadMockData: () => void
   addRecords: (records: SensitiveRecord[]) => void
@@ -29,8 +32,18 @@ interface AppState {
   removeWatchItem: (id: string) => void
   updateWatchItem: (id: string, updates: Partial<Omit<WatchItem, 'id'>>) => void
 
+  setSelectedTimelineEventId: (id: string | null) => void
+  setSelectedWordGroupId: (id: string | null) => void
+
+  saveSnapshot: (name: string, filter: ReportSnapshot['filter'], summary: string) => void
+  deleteSnapshot: (id: string) => void
+  restoreSnapshot: (id: string) => { filter: ReportSnapshot['filter']; summary: string } | null
+
   getRecordsByCategory: (category: Category) => SensitiveRecord[]
   getRecordsByChannel: (channel: Channel) => SensitiveRecord[]
+  getRecordsByDate: (date: string) => SensitiveRecord[]
+  getTopWordsByDate: (date: string, limit: number) => { word: string; count: number; category: Category }[]
+  getSpikesForWord: (word: string) => { id: string; date: string; description: string; magnitude: number }[]
   getTopWords: (limit: number) => { word: string; count: number; category: Category }[]
   getChannelDistribution: () => { channel: Channel; count: number }[]
   getCategoryDistribution: () => { category: Category; count: number }[]
@@ -120,6 +133,9 @@ export const useStore = create<AppState>((set, get) => ({
   timelineEvents: [],
   watchItems: [],
   dataLoaded: false,
+  snapshots: [],
+  selectedTimelineEventId: null,
+  selectedWordGroupId: null,
 
   loadMockData: () => {
     set({
@@ -140,6 +156,8 @@ export const useStore = create<AppState>((set, get) => ({
         timelineEvents: generateTimelineFromRecords(allRecords),
         watchItems: [],
         dataLoaded: true,
+        selectedTimelineEventId: null,
+        selectedWordGroupId: null,
       }
     })
   },
@@ -151,6 +169,8 @@ export const useStore = create<AppState>((set, get) => ({
       timelineEvents: generateTimelineFromRecords(records),
       watchItems: [],
       dataLoaded: records.length > 0 ? true : false,
+      selectedTimelineEventId: null,
+      selectedWordGroupId: null,
     })
   },
 
@@ -161,6 +181,8 @@ export const useStore = create<AppState>((set, get) => ({
       timelineEvents: [],
       watchItems: [],
       dataLoaded: false,
+      selectedTimelineEventId: null,
+      selectedWordGroupId: null,
     })
   },
 
@@ -298,6 +320,41 @@ export const useStore = create<AppState>((set, get) => ({
     }))
   },
 
+  setSelectedTimelineEventId: (id) => set({ selectedTimelineEventId: id }),
+  setSelectedWordGroupId: (id) => set({ selectedWordGroupId: id }),
+
+  saveSnapshot: (name, filter, summary) =>
+    set((s) => {
+      const snap: ReportSnapshot = {
+        id: `snap-${Date.now()}`,
+        name,
+        createdAt: new Date().toISOString(),
+        filter,
+        summary,
+        topWords: get().getTopWords(50),
+        watchItems: [...s.watchItems],
+        disposalTimes: (() => {
+          const dt = get().getDisposalTimes()
+          return {
+            avg: dt.avg, max: dt.max, min: dt.min,
+            pairs: dt.pairs.map((p) => ({ spike: p.spike, response: p.response, hours: p.hours, type: p.type })),
+          }
+        })(),
+        channelDist: get().getChannelDistribution(),
+        totalRecords: s.records.length,
+        totalHits: s.records.reduce((sum, r) => sum + r.count, 0),
+      }
+      return { snapshots: [snap, ...s.snapshots] }
+    }),
+
+  deleteSnapshot: (id) => set((s) => ({ snapshots: s.snapshots.filter((sn) => sn.id !== id) })),
+
+  restoreSnapshot: (id) => {
+    const snap = get().snapshots.find((sn) => sn.id === id)
+    if (!snap) return null
+    return { filter: snap.filter, summary: snap.summary }
+  },
+
   addWatchItem: (word, priority, reason) =>
     set((s) => ({
       watchItems: [
@@ -320,6 +377,31 @@ export const useStore = create<AppState>((set, get) => ({
 
   getRecordsByCategory: (category) => get().records.filter((r) => r.category === category),
   getRecordsByChannel: (channel) => get().records.filter((r) => r.channel === channel),
+  getRecordsByDate: (date) => get().records.filter((r) => r.hitTime.slice(0, 10) === date),
+
+  getTopWordsByDate: (date, limit) => {
+    const dayRecords = get().records.filter((r) => r.hitTime.slice(0, 10) === date)
+    const wordMap = new Map<string, { count: number; category: Category }>()
+    dayRecords.forEach((r) => {
+      const existing = wordMap.get(r.word)
+      if (existing) existing.count += r.count
+      else wordMap.set(r.word, { count: r.count, category: r.category })
+    })
+    return Array.from(wordMap.entries())
+      .map(([word, data]) => ({ word, count: data.count, category: data.category }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, limit)
+  },
+
+  getSpikesForWord: (word) => {
+    const rs = get().records.filter((r) => r.word === word)
+    if (rs.length === 0) return []
+    const eventDays = new Set(rs.map((r) => r.hitTime.slice(0, 10)))
+    return get().timelineEvents
+      .filter((e) => e.type === 'spike' && eventDays.has(e.timestamp.slice(0, 10)))
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .map((e) => ({ id: e.id, date: e.timestamp.slice(0, 10), description: e.description, magnitude: e.spikeMagnitude }))
+  },
 
   getTopWords: (limit) => {
     const wordMap = new Map<string, { count: number; category: Category }>()

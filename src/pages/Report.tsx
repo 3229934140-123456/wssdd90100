@@ -1,8 +1,8 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useStore } from '@/store/useStore'
-import { CHANNEL_LABELS, PRIORITY_LABELS, CATEGORY_LABELS, type Channel, type Priority, type WatchItem, type Category } from '@/types'
+import { CHANNEL_LABELS, PRIORITY_LABELS, CATEGORY_LABELS, type Channel, type Priority, type WatchItem, type Category, type ReportSnapshot } from '@/types'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
-import { AlertTriangle, TrendingUp, Clock, ListChecks, Plus, Trash2, Edit3, FileText, Filter, Calendar, Sparkles, Check, X, Zap } from 'lucide-react'
+import { AlertTriangle, TrendingUp, Clock, ListChecks, Plus, Trash2, Edit3, FileText, Filter, Calendar, Sparkles, Check, X, Zap, Save, History, GitCompare, Download, ChevronDown, ChevronUp, Copy as CopyIcon, AlertCircle } from 'lucide-react'
 
 const CHANNEL_COLORS: Record<Channel, string> = {
   weibo: '#E6162D',
@@ -25,19 +25,24 @@ const NOTE_TYPE_LABELS: Record<string, string> = {
   other: '其他备注',
 }
 
+const allCategories: (Category | 'all')[] = ['all', ...(Object.keys(CATEGORY_LABELS) as Category[])]
+
 export default function Report() {
   const getTopWords = useStore((s) => s.getTopWords)
   const channelDist = useStore((s) => s.getChannelDistribution())
   const getCategoryDistribution = useStore((s) => s.getCategoryDistribution)
   const watchItems = useStore((s) => s.watchItems)
   const disposalTimes = useStore((s) => s.getDisposalTimes())
-  const timelineEvents = useStore((s) => s.timelineEvents)
   const getSpikeSummaries = useStore((s) => s.getSpikeSummaries)
   const getDateRange = useStore((s) => s.getDateRange)
   const addWatchItem = useStore((s) => s.addWatchItem)
   const removeWatchItem = useStore((s) => s.removeWatchItem)
   const updateWatchItem = useStore((s) => s.updateWatchItem)
   const records = useStore((s) => s.records)
+  const snapshots = useStore((s) => s.snapshots)
+  const saveSnapshot = useStore((s) => s.saveSnapshot)
+  const deleteSnapshot = useStore((s) => s.deleteSnapshot)
+  const restoreSnapshot = useStore((s) => s.restoreSnapshot)
 
   const [showForm, setShowForm] = useState(false)
   const [formWord, setFormWord] = useState('')
@@ -52,11 +57,16 @@ export default function Report() {
   const [summaryEditing, setSummaryEditing] = useState(false)
   const [summaryText, setSummaryText] = useState('')
 
-  const allCategories: (Category | 'all')[] = ['all', ...Object.keys(CATEGORY_LABELS) as Category[]]
+  const [showSnapshots, setShowSnapshots] = useState(false)
+  const [snapNameInput, setSnapNameInput] = useState('')
+  const [showSaveSnapDialog, setShowSaveSnapDialog] = useState(false)
+  const [compareA, setCompareA] = useState<string | null>(null)
+  const [compareB, setCompareB] = useState<string | null>(null)
+  const [showExportDialog, setShowExportDialog] = useState(false)
+  const [expandedSnap, setExpandedSnap] = useState<string | null>(null)
 
   const dateRange = getDateRange()
   const spikes = getSpikeSummaries()
-
   const categoryDist = getCategoryDistribution()
   const topWordsAll = getTopWords(50)
 
@@ -134,7 +144,9 @@ export default function Report() {
       parts.push(`目前还没有标注官方回应/媒体报道/达人转发，处置时效暂无法评估。`)
     }
     return parts.join('')
-  }, [dateRange, filteredSpikes, filteredTopWords, categoryDist, filteredPairs, timelineEvents.length, summaryFilterCat])
+  }, [dateRange, filteredSpikes, filteredTopWords, categoryDist, filteredPairs, summaryFilterCat, records.length])
+
+  const timelineEvents = useStore((s) => s.timelineEvents)
 
   useEffect(() => {
     if (!summaryEditing && autoSummary && summaryText !== autoSummary) {
@@ -152,29 +164,390 @@ export default function Report() {
   }
 
   const handleEditSave = (id: string) => {
-    if (editReason.trim()) {
-      updateWatchItem(id, { reason: editReason.trim() })
-    }
+    if (editReason.trim()) updateWatchItem(id, { reason: editReason.trim() })
     setEditingId(null)
     setEditReason('')
   }
 
-  const applyFiltersToSummary = () => {
-    setSummaryText(autoSummary)
+  const applyFiltersToSummary = () => setSummaryText(autoSummary)
+  const saveSummaryEdit = () => setSummaryEditing(false)
+  const resetSummaryToAuto = () => { setSummaryText(autoSummary); setSummaryEditing(false) }
+
+  const currentFilter: ReportSnapshot['filter'] = {
+    category: summaryFilterCat,
+    startDate: summaryStart,
+    endDate: summaryEnd,
   }
 
-  const saveSummaryEdit = () => {
-    setSummaryEditing(false)
+  const doSaveSnapshot = () => {
+    const name = snapNameInput.trim() || `快照 ${new Date().toLocaleString('zh-CN')}`
+    saveSnapshot(name, currentFilter, summaryText)
+    setShowSaveSnapDialog(false)
+    setSnapNameInput('')
   }
 
-  const resetSummaryToAuto = () => {
-    setSummaryText(autoSummary)
-    setSummaryEditing(false)
+  const exportCurrent = () => {
+    const snap: any = {
+      name: `复盘报告 ${new Date().toLocaleString('zh-CN')}`,
+      exportedAt: new Date().toISOString(),
+      filter: currentFilter,
+      summary: summaryText,
+      topWords: filteredTopWords,
+      watchItems,
+      disposalTimes: {
+        avg: disposalTimes.avg, max: disposalTimes.max, min: disposalTimes.min,
+        pairs: filteredPairs.map((p) => ({ spike: p.spike, response: p.response, hours: p.hours, type: p.type })),
+      },
+      channelDist,
+      totalRecords: filteredRecords.length,
+      totalHits: filteredRecords.reduce((s, r) => s + r.count, 0),
+    }
+    const blob = new Blob([JSON.stringify(snap, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `report-${Date.now()}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    setShowExportDialog(false)
   }
+
+  const copyText = (t: string) => {
+    navigator.clipboard?.writeText(t)
+  }
+
+  const getSnapA = () => snapshots.find((s) => s.id === compareA) || null
+  const getSnapB = () => snapshots.find((s) => s.id === compareB) || null
 
   return (
     <div className="p-6 space-y-6 min-h-screen">
-      <h1 className="text-2xl font-display font-bold">复盘报告</h1>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <h1 className="text-2xl font-display font-bold">复盘报告</h1>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowSnapshots(!showSnapshots)} className="btn-ghost text-sm">
+            <History className="w-4 h-4 mr-1" />
+            版本历史 ({snapshots.length})
+          </button>
+          <button onClick={() => {
+            setShowSaveSnapDialog(true)
+            setSnapNameInput(`复盘 ${new Date().toLocaleString('zh-CN')}`)
+          }} className="btn-ghost text-sm">
+            <Save className="w-4 h-4 mr-1" />保存快照
+          </button>
+          <button onClick={() => setShowExportDialog(true)} className="btn-primary text-sm">
+            <Download className="w-4 h-4 mr-1" />导出报告
+          </button>
+        </div>
+      </div>
+
+      {showSaveSnapDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowSaveSnapDialog(false)}>
+          <div className="card w-[420px] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-display font-bold text-base mb-3">保存快照</h3>
+            <p className="text-xs text-zinc-500 mb-3">保存当前筛选条件、摘要文字、Top词组和关注词，方便后续对比或回退</p>
+            <input
+              value={snapNameInput}
+              onChange={(e) => setSnapNameInput(e.target.value)}
+              placeholder="快照名称"
+              className="w-full bg-surface-200 border border-zinc-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent mb-4"
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowSaveSnapDialog(false)} className="btn-ghost text-sm">取消</button>
+              <button onClick={doSaveSnapshot} className="btn-primary text-sm">
+                <Save className="w-4 h-4 mr-1" />保存
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showExportDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={() => setShowExportDialog(false)}>
+          <div className="card w-[680px] max-w-[95vw] max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-display font-bold text-base">导出前确认</h3>
+              <button onClick={() => setShowExportDialog(false)} className="text-zinc-500 hover:text-zinc-300">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="space-y-4 text-sm">
+              <div className="bg-surface-50 rounded-lg p-3 border border-accent/30">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="font-semibold text-zinc-300 flex items-center gap-1">
+                    <AlertCircle className="w-4 h-4 text-accent" />请确认以下为最终导出内容
+                  </p>
+                  <span className="text-[10px] text-zinc-500 bg-surface-200 px-2 py-0.5 rounded">
+                    筛选：{summaryFilterCat === 'all' ? '全部分类' : CATEGORY_LABELS[summaryFilterCat]}
+                    {summaryStart && ` · ${summaryStart}起`}{summaryEnd && ` · 至${summaryEnd}`}
+                  </span>
+                </div>
+                <div className="grid grid-cols-4 gap-2 text-xs mb-3">
+                  <div><span className="text-zinc-500">命中次数：</span><span className="text-accent font-mono">{filteredRecords.reduce((s, r) => s + r.count, 0).toLocaleString()}</span></div>
+                  <div><span className="text-zinc-500">爆发节点：</span><span className="text-zinc-200 font-mono">{filteredSpikes.length}</span></div>
+                  <div><span className="text-zinc-500">关注词：</span><span className="text-zinc-200 font-mono">{watchItems.length}</span></div>
+                  <div><span className="text-zinc-500">响应节点：</span><span className="text-emerald-400 font-mono">{filteredPairs.length}</span></div>
+                </div>
+              </div>
+
+              <div>
+                <p className="font-semibold text-zinc-300 mb-2 text-xs flex items-center justify-between">
+                  <span>复盘摘要</span>
+                  <button onClick={() => copyText(summaryText)} className="btn-ghost text-[10px] px-2 py-0.5">
+                    <CopyIcon className="w-3 h-3 mr-1" />复制
+                  </button>
+                </p>
+                <div className="bg-surface-50 rounded-lg p-3 text-zinc-200 text-xs leading-6 max-h-40 overflow-y-auto">
+                  {summaryText || <span className="text-zinc-600">（无摘要）</span>}
+                </div>
+              </div>
+
+              <div>
+                <p className="font-semibold text-zinc-300 mb-2 text-xs">高频词组（前10）</p>
+                <div className="bg-surface-50 rounded-lg p-3">
+                  <table className="w-full text-xs">
+                    <thead><tr className="text-zinc-500">
+                      <th className="text-left py-1 pr-3">词组</th><th className="text-left py-1 pr-3">分类</th><th className="text-right py-1">次数</th>
+                    </tr></thead>
+                    <tbody>
+                      {filteredTopWords.slice(0, 10).map((w) => (
+                        <tr key={w.word} className="border-t border-zinc-800/50">
+                          <td className="py-1 pr-3 text-zinc-200">{w.word}</td>
+                          <td className="py-1 pr-3 text-zinc-400">{CATEGORY_LABELS[w.category]}</td>
+                          <td className="py-1 text-right font-mono text-accent">{w.count}</td>
+                        </tr>
+                      ))}
+                      {filteredTopWords.length === 0 && (
+                        <tr><td colSpan={3} className="py-2 text-center text-zinc-600">无数据</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {filteredPairs.length > 0 && (
+                <div>
+                  <p className="font-semibold text-zinc-300 mb-2 text-xs">处置时效明细</p>
+                  <div className="bg-surface-50 rounded-lg p-3">
+                    <table className="w-full text-xs">
+                      <thead><tr className="text-zinc-500">
+                        <th className="text-left py-1 pr-3">爆发</th><th className="text-left py-1 pr-3">回应</th><th className="text-left py-1 pr-3">类型</th><th className="text-right py-1">小时</th>
+                      </tr></thead>
+                      <tbody>
+                        {filteredPairs.map((p, i) => (
+                          <tr key={i} className="border-t border-zinc-800/50">
+                            <td className="py-1 pr-3 text-zinc-200 truncate max-w-[120px]">{p.spike}</td>
+                            <td className="py-1 pr-3 text-zinc-400 truncate max-w-[180px]">{p.response}</td>
+                            <td className="py-1 pr-3 text-zinc-400">{NOTE_TYPE_LABELS[p.type] || p.type}</td>
+                            <td className="py-1 text-right font-mono text-accent">{p.hours.toFixed(1)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {watchItems.length > 0 && (
+                <div>
+                  <p className="font-semibold text-zinc-300 mb-2 text-xs">关注词清单（{watchItems.length}）</p>
+                  <div className="bg-surface-50 rounded-lg p-3 space-y-1 text-xs max-h-32 overflow-y-auto">
+                    {watchItems.map((w) => (
+                      <div key={w.id} className="flex items-center gap-2">
+                        <span className={`badge ${PRIORITY_BADGE[w.priority]}`}>{PRIORITY_LABELS[w.priority]}</span>
+                        <span className="font-medium text-zinc-200">{w.word}</span>
+                        {w.reason && <span className="text-zinc-500 truncate flex-1">— {w.reason}</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 mt-6 pt-4 border-t border-zinc-800">
+              <button onClick={() => setShowExportDialog(false)} className="btn-ghost text-sm">再看看</button>
+              <button onClick={exportCurrent} className="btn-primary text-sm">
+                <Download className="w-4 h-4 mr-1" />确认导出 JSON
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSnapshots && (
+        <div className="card">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-display font-bold text-sm text-zinc-300 flex items-center gap-2">
+              <History className="w-4 h-4 text-accent" />
+              报告快照
+            </h2>
+            {snapshots.length >= 2 && (
+              <div className="flex items-center gap-2">
+                <GitCompare className="w-3.5 h-3.5 text-zinc-500" />
+                <span className="text-xs text-zinc-500">对比</span>
+                <select
+                  value={compareA || ''}
+                  onChange={(e) => setCompareA(e.target.value || null)}
+                  className="bg-surface-200 border border-zinc-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-accent"
+                >
+                  <option value="">选择 A</option>
+                  {snapshots.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <span className="text-zinc-500">vs</span>
+                <select
+                  value={compareB || ''}
+                  onChange={(e) => setCompareB(e.target.value || null)}
+                  className="bg-surface-200 border border-zinc-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-accent"
+                >
+                  <option value="">选择 B</option>
+                  {snapshots.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {compareA && compareB && getSnapA() && getSnapB() && (
+            <div className="mb-4 border border-zinc-700 rounded-lg overflow-hidden">
+              <div className="grid grid-cols-2 bg-surface-50 text-xs">
+                <div className="px-3 py-2 border-r border-zinc-800">
+                  <p className="font-bold text-accent">A · {getSnapA()!.name}</p>
+                  <p className="text-zinc-500 font-mono">{new Date(getSnapA()!.createdAt).toLocaleString('zh-CN')}</p>
+                </div>
+                <div className="px-3 py-2">
+                  <p className="font-bold text-indigo-400">B · {getSnapB()!.name}</p>
+                  <p className="text-zinc-500 font-mono">{new Date(getSnapB()!.createdAt).toLocaleString('zh-CN')}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-px bg-zinc-800 text-xs">
+                <div className="bg-surface-100 p-3">
+                  <p className="text-zinc-500 mb-1">命中</p>
+                  <p className="font-mono text-zinc-200">{getSnapA()!.totalHits.toLocaleString()} 次 / {getSnapA()!.totalRecords} 条</p>
+                </div>
+                <div className="bg-surface-100 p-3">
+                  <p className="text-zinc-500 mb-1">命中</p>
+                  <p className={`font-mono ${getSnapB()!.totalHits > getSnapA()!.totalHits ? 'text-red-400' : getSnapB()!.totalHits < getSnapA()!.totalHits ? 'text-emerald-400' : 'text-zinc-200'}`}>
+                    {getSnapB()!.totalHits.toLocaleString()} 次 / {getSnapB()!.totalRecords} 条
+                  </p>
+                </div>
+                <div className="bg-surface-100 p-3">
+                  <p className="text-zinc-500 mb-1">平均处置</p>
+                  <p className="font-mono text-zinc-200">{getSnapA()!.disposalTimes.avg.toFixed(1)}h</p>
+                </div>
+                <div className="bg-surface-100 p-3">
+                  <p className="text-zinc-500 mb-1">平均处置</p>
+                  <p className={`font-mono ${getSnapB()!.disposalTimes.avg < getSnapA()!.disposalTimes.avg ? 'text-emerald-400' : getSnapB()!.disposalTimes.avg > getSnapA()!.disposalTimes.avg ? 'text-red-400' : 'text-zinc-200'}`}>
+                    {getSnapB()!.disposalTimes.avg.toFixed(1)}h
+                  </p>
+                </div>
+                <div className="bg-surface-100 p-3">
+                  <p className="text-zinc-500 mb-1">关注词</p>
+                  <p className="font-mono text-zinc-200">{getSnapA()!.watchItems.length}</p>
+                </div>
+                <div className="bg-surface-100 p-3">
+                  <p className="text-zinc-500 mb-1">关注词</p>
+                  <p className={`font-mono ${getSnapB()!.watchItems.length !== getSnapA()!.watchItems.length ? 'text-accent' : 'text-zinc-200'}`}>
+                    {getSnapB()!.watchItems.length}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-px bg-zinc-800 text-xs">
+                <div className="bg-surface-100 p-3 col-span-2">
+                  <p className="text-zinc-500 mb-1">摘要差异</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <p className="text-[11px] text-zinc-300 leading-5">{getSnapA()!.summary || '—'}</p>
+                    <p className="text-[11px] text-zinc-300 leading-5">{getSnapB()!.summary || '—'}</p>
+                  </div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-px bg-zinc-800 text-xs">
+                <div className="bg-surface-100 p-3">
+                  <p className="text-zinc-500 mb-1">Top 词组</p>
+                  <ul className="space-y-0.5">
+                    {getSnapA()!.topWords.slice(0, 5).map((w) => (
+                      <li key={w.word} className="flex items-center justify-between">
+                        <span className="text-zinc-300 truncate">{w.word}</span>
+                        <span className="font-mono text-zinc-400 ml-2">{w.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="bg-surface-100 p-3">
+                  <p className="text-zinc-500 mb-1">Top 词组</p>
+                  <ul className="space-y-0.5">
+                    {getSnapB()!.topWords.slice(0, 5).map((w) => {
+                      const inA = getSnapA()!.topWords.find((a) => a.word === w.word)
+                      return (
+                        <li key={w.word} className="flex items-center justify-between">
+                          <span className={`truncate ${inA ? 'text-zinc-300' : 'text-emerald-400'}`}>{w.word}</span>
+                          <span className={`font-mono ml-2 ${inA && w.count !== inA.count ? 'text-accent' : 'text-zinc-400'}`}>
+                            {w.count}{inA && w.count !== inA.count && <span className="text-[10px]"> ({w.count - inA.count > 0 ? '+' : ''}{w.count - inA.count})</span>}
+                          </span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {snapshots.length === 0 ? (
+            <div className="py-8 text-center text-zinc-600 text-sm">还没有保存过快照，点右上角「保存快照」创建第一版</div>
+          ) : (
+            <div className="space-y-1.5">
+              {snapshots.map((snap) => {
+                const isOpen = expandedSnap === snap.id
+                return (
+                  <div key={snap.id} className="bg-surface-50 rounded-lg overflow-hidden">
+                    <div className="flex items-center justify-between px-3 py-2">
+                      <button onClick={() => setExpandedSnap(isOpen ? null : snap.id)} className="flex items-center gap-2 min-w-0 flex-1 text-left">
+                        {isOpen ? <ChevronUp className="w-3.5 h-3.5 text-zinc-500 shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-zinc-500 shrink-0" />}
+                        <span className="font-medium text-sm text-zinc-200 truncate">{snap.name}</span>
+                      </button>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-[10px] font-mono text-zinc-500">
+                          {new Date(snap.createdAt).toLocaleString('zh-CN')}
+                        </span>
+                        <span className="text-[10px] text-zinc-500 bg-surface-200 px-2 py-0.5 rounded">
+                          {snap.filter.category === 'all' ? '全部分类' : CATEGORY_LABELS[snap.filter.category]}
+                          {snap.filter.startDate && ` · ${snap.filter.startDate}`}{snap.filter.endDate && `~${snap.filter.endDate}`}
+                        </span>
+                        <button
+                          onClick={() => {
+                            const restored = restoreSnapshot(snap.id)
+                            if (restored) {
+                              setSummaryFilterCat(restored.filter.category)
+                              setSummaryStart(restored.filter.startDate)
+                              setSummaryEnd(restored.filter.endDate)
+                              setSummaryText(restored.summary)
+                              setShowSnapshots(false)
+                            }
+                          }}
+                          className="text-[10px] text-accent hover:underline"
+                        >恢复</button>
+                        <button onClick={() => deleteSnapshot(snap.id)} className="text-[10px] text-red-400 hover:text-red-300">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    {isOpen && (
+                      <div className="px-3 pb-3 pt-1 border-t border-zinc-800 space-y-2">
+                        <div className="grid grid-cols-4 gap-3 text-xs">
+                          <div><span className="text-zinc-500">命中：</span><span className="font-mono text-zinc-200">{snap.totalHits.toLocaleString()} 次</span></div>
+                          <div><span className="text-zinc-500">记录：</span><span className="font-mono text-zinc-200">{snap.totalRecords}</span></div>
+                          <div><span className="text-zinc-500">平均处置：</span><span className="font-mono text-zinc-200">{snap.disposalTimes.avg.toFixed(1)}h</span></div>
+                          <div><span className="text-zinc-500">关注词：</span><span className="font-mono text-zinc-200">{snap.watchItems.length}</span></div>
+                        </div>
+                        <div className="text-xs text-zinc-300 bg-surface-200 rounded p-2 leading-5">
+                          {snap.summary || <span className="text-zinc-600">（无摘要）</span>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       <div>
         <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
@@ -333,21 +706,27 @@ export default function Report() {
           高频敏感词 Top 15
         </h2>
         <div className="card">
-          <ResponsiveContainer width="100%" height={400}>
-            <BarChart data={barData} layout="vertical" margin={{ left: 80, right: 20 }}>
-              <XAxis type="number" tick={{ fill: '#71717a', fontSize: 12 }} fontFamily="JetBrains Mono" />
-              <YAxis type="category" dataKey="name" tick={{ fill: '#a1a1aa', fontSize: 13 }} width={72} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#2A2D35', border: '1px solid #3f3f46', borderRadius: 8, fontSize: 13 }}
-                labelStyle={{ color: '#e4e4e7' }}
-              />
-              <Bar dataKey="value" fill="#F97316" radius={[0, 4, 4, 0]} barSize={16}>
-                {barData.map((_, i) => (
-                  <Cell key={i} fill="#F97316" fillOpacity={0.5 + (i / Math.max(1, barData.length)) * 0.5} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          {barData.length === 0 ? (
+            <div className="h-[400px] flex items-center justify-center text-zinc-500 text-sm">
+              {records.length === 0 ? '暂无数据' : '当前筛选下无数据'}
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={400}>
+              <BarChart data={barData} layout="vertical" margin={{ left: 80, right: 20 }}>
+                <XAxis type="number" tick={{ fill: '#71717a', fontSize: 12 }} fontFamily="JetBrains Mono" />
+                <YAxis type="category" dataKey="name" tick={{ fill: '#a1a1aa', fontSize: 13 }} width={72} />
+                <Tooltip
+                  contentStyle={{ backgroundColor: '#2A2D35', border: '1px solid #3f3f46', borderRadius: 8, fontSize: 13 }}
+                  labelStyle={{ color: '#e4e4e7' }}
+                />
+                <Bar dataKey="value" fill="#F97316" radius={[0, 4, 4, 0]} barSize={16}>
+                  {barData.map((_, i) => (
+                    <Cell key={i} fill="#F97316" fillOpacity={0.5 + (i / Math.max(1, barData.length)) * 0.5} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       </div>
 
@@ -358,28 +737,32 @@ export default function Report() {
             扩散渠道分析
           </h2>
           <div className="card flex items-center justify-center">
-            <ResponsiveContainer width="100%" height={300}>
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  dataKey="value"
-                  stroke="none"
-                >
-                  {pieData.map((d, i) => (
-                    <Cell key={i} fill={d.color} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  contentStyle={{ backgroundColor: '#2A2D35', border: '1px solid #3f3f46', borderRadius: 8, fontSize: 13 }}
-                  labelStyle={{ color: '#e4e4e7' }}
-                />
-                <Legend formatter={(value) => <span className="text-zinc-300 text-sm">{value}</span>} />
-              </PieChart>
-            </ResponsiveContainer>
+            {pieData.length === 0 ? (
+              <div className="h-[300px] flex items-center justify-center text-zinc-500 text-sm">暂无数据</div>
+            ) : (
+              <ResponsiveContainer width="100%" height={300}>
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={100}
+                    dataKey="value"
+                    stroke="none"
+                  >
+                    {pieData.map((d, i) => (
+                      <Cell key={i} fill={d.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#2A2D35', border: '1px solid #3f3f46', borderRadius: 8, fontSize: 13 }}
+                    labelStyle={{ color: '#e4e4e7' }}
+                  />
+                  <Legend formatter={(value) => <span className="text-zinc-300 text-sm">{value}</span>} />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
@@ -394,6 +777,10 @@ export default function Report() {
                 暂无官方回应/媒体报道/达人转发数据<br />
                 请先在事件时间线中添加备注
               </p>
+            </div>
+          ) : disposalTimes.avg === 0 ? (
+            <div className="card text-center py-6">
+              <p className="text-sm text-zinc-500">暂无数据</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4">

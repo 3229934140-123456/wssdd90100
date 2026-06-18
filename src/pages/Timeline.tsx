@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useStore } from '@/store/useStore'
-import { CATEGORY_LABELS, NOTE_TYPE_LABELS, type Category, type NoteType, type TimelineEvent } from '@/types'
-import { Calendar, MessageSquare, Newspaper, Megaphone, Plus, X, Filter, ArrowRightLeft, Copy, ChevronDown } from 'lucide-react'
+import { CATEGORY_LABELS, NOTE_TYPE_LABELS, CHANNEL_LABELS, type Category, type NoteType, type TimelineEvent } from '@/types'
+import { Calendar, MessageSquare, Newspaper, Megaphone, Plus, X, Filter, ArrowRightLeft, Copy, TrendingUp, Database, ChevronRight } from 'lucide-react'
+import { useNavigate } from 'react-router'
 
 const EVENT_COLORS: Record<string, string> = {
   spike: '#F97316',
@@ -18,6 +19,15 @@ const NOTE_ICONS: Record<string, React.ReactNode> = {
 }
 
 const ALL_CATEGORIES = Object.keys(CATEGORY_LABELS) as Category[]
+
+const CAT_BADGE_CLASS: Record<Category, string> = {
+  abuse: 'badge-abuse',
+  boycott: 'badge-boycott',
+  quality: 'badge-quality',
+  fake_ad: 'badge-fake_ad',
+  price: 'badge-price',
+  other: 'badge-other',
+}
 
 const CAT_ACTIVE_CLASS: Record<Category, string> = {
   abuse: 'bg-cat-abuse text-white',
@@ -40,15 +50,26 @@ export default function Timeline() {
   const moveTimelineNote = useStore((s) => s.moveTimelineNote)
   const copyTimelineNote = useStore((s) => s.copyTimelineNote)
   const records = useStore((s) => s.records)
+  const getRecordsByDate = useStore((s) => s.getRecordsByDate)
+  const getTopWordsByDate = useStore((s) => s.getTopWordsByDate)
+  const setSelectedWordGroupId = useStore((s) => s.setSelectedWordGroupId)
+  const wordGroups = useStore((s) => s.wordGroups)
+  const storeSelectedEventId = useStore((s) => s.selectedTimelineEventId)
+  const clearStoreSelectedEventId = useStore((s) => s.setSelectedTimelineEventId)
+
   const [selectedCategories, setSelectedCategories] = useState<Category[]>([])
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null)
+  const [hasSynced, setHasSynced] = useState(false)
   const [newNoteType, setNewNoteType] = useState<NoteType>('official_response')
   const [newNoteContent, setNewNoteContent] = useState('')
   const [newNoteTimestamp, setNewNoteTimestamp] = useState('')
   const [filterOpen, setFilterOpen] = useState(false)
   const [noteActionMenu, setNoteActionMenu] = useState<{ noteId: string; eventId: string; mode: 'move' | 'copy' } | null>(null)
+  const [rawRecordsOpen, setRawRecordsOpen] = useState(false)
+
+  const navigate = useNavigate()
 
   const filtered = timelineEvents.filter((e) => {
     if (selectedCategories.length > 0) {
@@ -63,6 +84,17 @@ export default function Timeline() {
   })
 
   const selectedEvent = timelineEvents.find((e) => e.id === selectedEventId)
+  const selectedDate = selectedEvent ? selectedEvent.timestamp.slice(0, 10) : ''
+
+  const topWordsOfDay = useMemo(() => {
+    if (!selectedDate) return []
+    return getTopWordsByDate(selectedDate, 10)
+  }, [selectedDate, getTopWordsByDate])
+
+  const dayRecords = useMemo(() => {
+    if (!selectedDate) return []
+    return getRecordsByDate(selectedDate)
+  }, [selectedDate, getRecordsByDate])
 
   const spikeEvents: TimelineEvent[] = timelineEvents
     .filter((e) => e.type === 'spike')
@@ -84,17 +116,32 @@ export default function Timeline() {
   const handleMoveCopyConfirm = (targetEventId: string) => {
     if (!noteActionMenu) return
     const { noteId, eventId, mode } = noteActionMenu
-    if (mode === 'move') {
-      moveTimelineNote(noteId, eventId, targetEventId)
-    } else {
-      copyTimelineNote(noteId, eventId, targetEventId)
-    }
+    if (mode === 'move') moveTimelineNote(noteId, eventId, targetEventId)
+    else copyTimelineNote(noteId, eventId, targetEventId)
     setNoteActionMenu(null)
+  }
+
+  const jumpToWord = (word: string) => {
+    const group = wordGroups.find((g) => g.mergedWords.includes(word))
+    if (group) {
+      setSelectedWordGroupId(group.id)
+    } else {
+      setSelectedWordGroupId(null)
+    }
+    navigate('/attribution')
   }
 
   const sortedEvents = [...filtered].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   )
+
+  useEffect(() => {
+    if (!hasSynced && storeSelectedEventId) {
+      setSelectedEventId(storeSelectedEventId)
+      setHasSynced(true)
+      clearStoreSelectedEventId(null)
+    }
+  }, [hasSynced, storeSelectedEventId, clearStoreSelectedEventId])
 
   return (
     <div className="h-screen flex flex-col">
@@ -156,7 +203,7 @@ export default function Timeline() {
         <div className="flex-1 overflow-x-auto overflow-y-hidden px-6 py-6">
           {sortedEvents.length === 0 ? (
             <div className="h-full flex items-center justify-center text-zinc-500">
-              暂无事件数据
+              {records.length === 0 ? '暂无数据，请先导入敏感词记录或加载演示数据' : '暂无事件数据'}
             </div>
           ) : (
             <div className="h-full flex items-end gap-4 min-w-max pb-2">
@@ -194,13 +241,13 @@ export default function Timeline() {
         </div>
 
         {selectedEvent && (
-          <div className="w-80 border-l border-zinc-800 bg-surface-100 flex flex-col overflow-hidden shrink-0">
+          <div className="w-96 border-l border-zinc-800 bg-surface-100 flex flex-col overflow-hidden shrink-0">
             <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
               <h2 className="text-sm font-display font-bold text-zinc-100 truncate">
-                事件详情
+                事件详情 · {selectedDate}
               </h2>
               <button
-                onClick={() => { setSelectedEventId(null); setNoteActionMenu(null) }}
+                onClick={() => { setSelectedEventId(null); setNoteActionMenu(null); setRawRecordsOpen(false) }}
                 className="text-zinc-500 hover:text-zinc-200 transition-colors"
               >
                 <X size={16} />
@@ -242,6 +289,75 @@ export default function Timeline() {
               </div>
 
               <div className="border-t border-zinc-800 pt-3">
+                <h3 className="text-xs font-display font-bold text-zinc-400 mb-2 flex items-center gap-1">
+                  <TrendingUp className="w-3 h-3 text-accent" />
+                  当天 Top 词组 · 共 {topWordsOfDay.length} 个
+                </h3>
+                {topWordsOfDay.length === 0 ? (
+                  <p className="text-xs text-zinc-600">暂无当日词组数据</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {topWordsOfDay.map((w) => (
+                      <button
+                        key={w.word}
+                        onClick={() => jumpToWord(w.word)}
+                        className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded bg-surface-50 hover:bg-surface-200 group transition-colors text-left"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`badge ${CAT_BADGE_CLASS[w.category]} text-[10px] py-0`}>
+                            {CATEGORY_LABELS[w.category]}
+                          </span>
+                          <span className="text-xs text-zinc-200 font-medium truncate">{w.word}</span>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-[10px] font-mono text-accent">{w.count}</span>
+                          <ChevronRight className="w-3 h-3 text-zinc-600 group-hover:text-accent transition-colors" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-zinc-800 pt-3">
+                <button
+                  onClick={() => setRawRecordsOpen(!rawRecordsOpen)}
+                  className="text-xs font-display font-bold text-zinc-400 mb-2 flex items-center gap-1 w-full text-left"
+                >
+                  <Database className="w-3 h-3 text-accent" />
+                  原始记录 · {dayRecords.length} 条
+                  <ChevronRight className={`w-3 h-3 ml-auto transition-transform ${rawRecordsOpen ? 'rotate-90' : ''}`} />
+                </button>
+                {rawRecordsOpen && (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                    {dayRecords.slice(0, 50).map((r) => (
+                      <div key={r.id} className="px-2 py-1.5 rounded bg-surface-50 text-[11px]">
+                        <div className="flex items-center justify-between mb-0.5">
+                          <span className="text-zinc-200 font-medium">{r.word}</span>
+                          <span className={`badge ${CAT_BADGE_CLASS[r.category]} text-[9px] py-0`}>
+                            {CATEGORY_LABELS[r.category]}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-zinc-500">
+                          <span className="font-mono">{r.hitTime.slice(5, 16)}</span>
+                          <span>{CHANNEL_LABELS[r.channel]} · {r.source}</span>
+                          <span className="font-mono text-accent">{r.count}</span>
+                        </div>
+                      </div>
+                    ))}
+                    {dayRecords.length > 50 && (
+                      <p className="text-[10px] text-zinc-600 text-center pt-1">
+                        仅显示前 50 条
+                      </p>
+                    )}
+                    {dayRecords.length === 0 && (
+                      <p className="text-xs text-zinc-600">暂无当日记录</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-zinc-800 pt-3">
                 <h3 className="text-xs font-display font-bold text-zinc-400 mb-2">
                   备注 ({selectedEvent.notes.length})
                 </h3>
@@ -262,28 +378,26 @@ export default function Timeline() {
                               <span className="text-xs">{NOTE_TYPE_LABELS[note.noteType]}</span>
                             </div>
                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <div className="relative">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setNoteActionMenu(menuOpen && noteActionMenu?.mode === 'copy' ? null : { noteId: note.id, eventId: selectedEvent.id, mode: 'copy' })
-                                  }}
-                                  className="p-1 rounded hover:bg-surface-200 text-zinc-500 hover:text-accent transition-colors"
-                                  title="复制到其他节点"
-                                >
-                                  <Copy size={12} />
-                                </button>
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    setNoteActionMenu(menuOpen && noteActionMenu?.mode === 'move' ? null : { noteId: note.id, eventId: selectedEvent.id, mode: 'move' })
-                                  }}
-                                  className="p-1 rounded hover:bg-surface-200 text-zinc-500 hover:text-indigo-400 transition-colors"
-                                  title="移动到其他节点"
-                                >
-                                  <ArrowRightLeft size={12} />
-                                </button>
-                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setNoteActionMenu(menuOpen && noteActionMenu?.mode === 'copy' ? null : { noteId: note.id, eventId: selectedEvent.id, mode: 'copy' })
+                                }}
+                                className="p-1 rounded hover:bg-surface-200 text-zinc-500 hover:text-accent transition-colors"
+                                title="复制到其他节点"
+                              >
+                                <Copy size={12} />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setNoteActionMenu(menuOpen && noteActionMenu?.mode === 'move' ? null : { noteId: note.id, eventId: selectedEvent.id, mode: 'move' })
+                                }}
+                                className="p-1 rounded hover:bg-surface-200 text-zinc-500 hover:text-indigo-400 transition-colors"
+                                title="移动到其他节点"
+                              >
+                                <ArrowRightLeft size={12} />
+                              </button>
                               <button
                                 onClick={() => removeTimelineNote(selectedEvent.id, note.id)}
                                 className="p-1 rounded hover:bg-surface-200 text-zinc-600 hover:text-red-400 transition-colors"
@@ -379,7 +493,7 @@ export default function Timeline() {
               </button>
               {selectedEvent.notes.length > 0 && spikeEvents.length > 1 && (
                 <p className="text-[10px] text-zinc-600 text-center">
-                  提示：将鼠标悬停在备注上可复制或移动到其他节点
+                  提示：悬停备注可复制或移动到其他节点，点击词组可跳转至归因页
                 </p>
               )}
             </div>

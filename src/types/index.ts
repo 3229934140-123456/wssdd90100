@@ -84,3 +84,21 @@ export interface WatchItem {
   priority: Priority
   reason: string
 }
+
+export interface ReportSnapshot {
+  id: string
+  name: string
+  createdAt: string
+  filter: {
+    category: Category | 'all'
+    startDate: string
+    endDate: string
+  }
+  summary: string
+  topWords: { word: string; count: number; category: Category }[]
+  watchItems: WatchItem[]
+  disposalTimes: { avg: number; max: number; min: number; pairs: { spike: string; response: string; hours: number; type: string }[] }
+  channelDist: { channel: Channel; count: number }[]
+  totalRecords: number
+  totalHits: number
+}
